@@ -1,13 +1,12 @@
 #include <WiFi.h>
-#include <HTTPClient.h>
 
 constexpr int PIRpin = 23;
 constexpr int soundPin = 5;
 
-const char* ssid = "xxxxx";                                   // change to your ssid
-const char* pw = "xxxxx";                                     // change to your password
+const char* ssid = "ssid";                                   // change to your ssid
+const char* pw = "pw";                                     // change to your password
 
-IPAddress serverIP = IPAddress(192, 168, xxx, xxx);           // change to host server ip
+const char* serverHost = "192.168.x.x";                     // change to host server IP
 uint16_t port = 8000;
 
 void setup() {
@@ -39,55 +38,38 @@ void loop() {
  
   if (time1 - time0 > 1000){                                  // send sensor data every second
 
-    WiFiClient client;
-
     uint8_t PIRValue, soundValue;
-    char* outputPIR;
-    char* outputSound;
+    char outputPIR;
+    char outputSound;
     
     PIRValue = digitalRead(PIRpin);
     soundValue = digitalRead(soundPin);
 
-    if (PIRValue != PIRState){
-      outputPIR = "T";
+    if (PIRValue != PIRState) {
+      outputPIR = 'T';
       PIRState = PIRValue;
-    }
-    else {
-      outputPIR = "F";
-      PIRState = PIRValue;
+    } else {
+      outputPIR = 'F';
     }
 
     if (soundValue == HIGH) {
-      outputSound = "T";
-    }
-    else {
-      outputSound = "F";
+      outputSound = 'T';
+    } else {
+      outputSound = 'F';
     }
 
-    char output[25];
-    strcpy(output, "{\"Movement\":");
-    strcat(output, outputPIR);
-    strcat(output, ", \"Sound\":");
-    strcat(output, outputSound);
-    strcat(output, "}");
+    String payload = "{\"Movement\":";
+    payload = payload + outputPIR + ", \"Sound\":" + outputSound + "}";
     
-    Serial.println(output);
+    Serial.println(payload);
 
-    if (client.connect(serverIP, port)){                      //connect and send http request
-      client.println("POST / HTTP/1.1");
-      client.println("Host: 192.168.xxx.xxx");
-      client.println("Content-type: application/json");
-      client.println("Content-length: 25");
-      client.println("Connection: close");
-      client.println();
-      client.println(output);
-
-      Serial.println("Data Sent");
+    WiFiClient client;
+    if (client.connect(serverHost, port)) {
+      client.println(payload);
+      Serial.println("Sent via TCP");
       client.stop();
-    } 
-    else {
-      Serial.print("Failed to connect to server: ");
-      Serial.printf("time0: %lu, time1: %lu\n", time0, time1);
+    } else {
+      Serial.println("Failed to connect to TCP server");
     }
 
     time0 = time1;
