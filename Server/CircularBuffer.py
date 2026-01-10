@@ -5,15 +5,18 @@ class CircularBuffer:
         self._capacity = capacity
         self._buffer = deque(maxlen=capacity)
 
-    def append(self, item):
+    def add(self, item):
         self._buffer.append(item)
 
-    def getItem(self):
+    def get(self):
         if not self.is_empty():
             return self._buffer.popleft() 
         else: 
             return None
 
+    def size(self):
+        return len(self._buffer)
+    
     def is_full(self):
         return len(self._buffer) == self._capacity
 
