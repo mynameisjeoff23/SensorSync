@@ -7,9 +7,9 @@ constexpr uint16_t DIVIDER_VALUE = 80;
 constexpr uint16_t SAMPLE_FREQUENCY = 1000;                   // sample frequency can't be very high due to analogRead limitations
 constexpr uint32_t ALARM_VALUE = 1000000 / SAMPLE_FREQUENCY;  // in microseconds
 
-const char* ssid = "SSID";                                    // change to your ssid
-const char* pw = "PW";                                        // change to your password
-const char* serverHost = "10.141.162.28";                       // change to host server IP
+const char* ssid = "ssid";                                    // change to your ssid
+const char* pw = "pw";                                        // change to your password
+const char* serverHost = "10.141.xx.x";                       // change to host server IP
 uint16_t port = 8000;
 WiFiClient client;
 
@@ -83,19 +83,19 @@ void loop() {
             localBuffer[i * 2] = (soundBuffer[i] >> 8) & 0xFF;        // high byte
             localBuffer[i * 2 + 1] = soundBuffer[i] & 0xFF;           // low byte
         }
+        String timeHeader = "Time:" + String(time) +'\n';             // time at start of audio sample
 
-        unsigned long oldTime = time;
         bufferFull = 0;                                               // start audio sampling before 
         time = micros();                                              // time intensive tasks
-
-        /*Escape sequence will be 0xFF, since 12 bit ADC readings will never be 0xFFFF*/
-        String timeHeader = "Time:" + String(oldTime) + "\xFF\xFF";                // time at start of audio sample
-        String payload = String((const char*)localBuffer, SAMPLES * 2) + "\xFF\xFF";  // audio data
-        int length = payload.length() -2;
-        String LengthHeader = "Length:" + String(length) + "\xFF\xFF";
+        
+        String payload = String((const char*)localBuffer, SAMPLES * 2);
+        int length = payload.length();
+        String LengthHeader = "Length:" + String(length) + '\n';
         
         // send data via TCP
-        client.print(timeHeader + LengthHeader + payload);
+        client.print(timeHeader);
+        client.print(LengthHeader);
+        client.print(payload);
         
     }
 
