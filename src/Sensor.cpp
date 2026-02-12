@@ -7,8 +7,8 @@ constexpr uint16_t DIVIDER_VALUE = 80;
 constexpr uint16_t SAMPLE_FREQUENCY = 1000;                   // sample frequency can't be very high due to analogRead limitations
 constexpr uint32_t ALARM_VALUE = 1000000 / SAMPLE_FREQUENCY;  // in microseconds
 
-const char* ssid = "ssid";                                    // change to your ssid
-const char* pw = "pw";                                        // change to your password
+const char* ssid = "SSID";                                    // change to your ssid
+const char* pw = "PW";                                        // change to your password
 const char* serverHost = "10.141.xx.x";                       // change to host server IP
 uint16_t port = 8000;
 WiFiClient client;
@@ -65,38 +65,40 @@ void loop() {
 
     static unsigned long time = micros();
 
-    if (bufferFull){
-
-        // Check if still connected
-        if (!client.connected()) {
-            Serial.println("Disconnected from server, reconnecting...");
-            while(!client.connect(serverHost, port)) {
-                Serial.println("Reconnection failed, retrying...");
-                delay(1000);
-            }
-            Serial.println("Reconnected to server!");
+    // Check if still connected
+    if (!client.connected()) {
+        Serial.println("Disconnected from server, reconnecting...");
+        while(!client.connect(serverHost, port)) {
+            Serial.println("Reconnection failed, retrying...");
+            delay(1000);
         }
+        Serial.println("Reconnected to server!");
+    }
+
+    if (bufferFull){
 
         char localBuffer[SAMPLES * 2];
 
+        // TODO: process this in real time to remove overhead?
+        // small endian to avoid errors with delimiters in the payload
         for (int i = 0; i < SAMPLES; i++) {
-            localBuffer[i * 2] = (soundBuffer[i] >> 8) & 0xFF;        // high byte
-            localBuffer[i * 2 + 1] = soundBuffer[i] & 0xFF;           // low byte
+            localBuffer[i * 2] = soundBuffer[i] & 0x00FF;               // lower byte
+            localBuffer[i * 2 + 1] = (soundBuffer[i] >> 8) & 0x00FF;    // upper byte
         }
-        String timeHeader = "Time:" + String(time) +'\n';             // time at start of audio sample
+
+        unsigned long oldTime = time;
 
         bufferFull = 0;                                               // start audio sampling before 
         time = micros();                                              // time intensive tasks
         
-        String payload = String((const char*)localBuffer, SAMPLES * 2);
-        int length = payload.length();
-        String LengthHeader = "Length:" + String(length) + '\n';
+        /*Escape sequence will be \xFF\xFF, since 12 bit ADC readings will never be 0xFFFF*/
+        String timeHeader = "Time:" + String(oldTime) + "\xFF\xFF";                // time at start of audio sample
+        String payload = String((const char*)localBuffer, SAMPLES * 2) + "\xFF\xFF";  // audio data
+        int length = payload.length() -2;
+        String LengthHeader = "Length:" + String(length) + "\xFF\xFF";
         
         // send data via TCP
-        client.print(timeHeader);
-        client.print(LengthHeader);
-        client.print(payload);
-        
+        client.print(timeHeader + LengthHeader + payload);
     }
 
 }

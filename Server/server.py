@@ -84,10 +84,10 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 
                             if len(packet) != audioLength:
                                 raise ValueError(f"Length of audio: {len(packet)} does not match length header: {audioLength}")
-                            audio = numpy.frombuffer(packet, dtype='>u2')  # big-endian uint16
-                            audio = audio.astype(numpy.int16)
-                            audio = audio - numpy.mean(audio, dtype=numpy.int16)
-                            audio = audio * 16
+                            audio = numpy.frombuffer(packet, dtype='<u2').astype(numpy.float32)  # small-endian uint16
+                            audio -= numpy.mean(audio, dtype=numpy.float32)
+                            audio *= 16.0
+                            audio = numpy.clip(audio, -32768, 32767).astype(numpy.int16)
 
                             # Store audio chunk in circular buffer
                             # Currently disregarding start time of audio clip
