@@ -1,6 +1,9 @@
 #include <Arduino.h>                                          // can be deleted if using Arduino IDE
 #include <WiFi.h>
 #include <driver/i2s.h>
+#if __has_include("config.local.h")
+#include "config.local.h"
+#endif
 
 #define I2S_MIC_SERIAL_CLOCK GPIO_NUM_32
 #define I2S_MIC_LEFT_RIGHT_CLOCK GPIO_NUM_25
@@ -8,37 +11,30 @@
 
 #define I2S_PORT I2S_NUM_0
 
-struct __attribute__((packed)) AudioFrameHeader {
-    char magic[4];
-    uint32_t start_time_us;
-    uint16_t payload_len;
-    uint16_t checksum;
-};
+#ifndef WIFI_SSID
+#define WIFI_SSID "YOUR_SSID"
+#endif
 
-uint16_t computeHeaderChecksum(const char magic[4], uint32_t startTimeUs, uint16_t payloadLen) {
-    uint16_t sum = 0;
-    for (uint8_t i = 0; i < 4; i++) {
-        sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(magic[i]));
-    }
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "YOUR_PASSWORD"
+#endif
 
-    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(startTimeUs & 0xFF));
-    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 8) & 0xFF));
-    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 16) & 0xFF));
-    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 24) & 0xFF));
+#ifndef SERVER_HOST
+#define SERVER_HOST "127.0.0.1"     //replace with your server's IP address or hostname
+#endif
 
-    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(payloadLen & 0xFF));
-    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((payloadLen >> 8) & 0xFF));
-    return sum;
-}
+#ifndef SERVER_PORT
+#define SERVER_PORT 8000
+#endif
 
 constexpr uint16_t OUTPUT_LEN = 2048;
 constexpr uint16_t SAMPLE_BUFFER_SIZE = 512;
 constexpr uint16_t SAMPLE_RATE = 16000;
 
-const char* ssid = "SSID";                                    // change to your ssid
-const char* pw = "PW";                                        // change to your password
-const char* serverHost = "10.141.162.9";                      // change to host server IP
-uint16_t port = 8000;
+const char* ssid = WIFI_SSID;
+const char* pw = WIFI_PASSWORD;
+const char* serverHost = SERVER_HOST;
+uint16_t port = SERVER_PORT;
 WiFiClient client;
 
 constexpr uint32_t WIFI_RECONNECT_ATTEMPT_MS = 10000;
@@ -68,6 +64,29 @@ i2s_pin_config_t i2s_mic_pins = {
     .ws_io_num = I2S_MIC_LEFT_RIGHT_CLOCK,
     .data_out_num = I2S_PIN_NO_CHANGE,
     .data_in_num = I2S_MIC_SERIAL_DATA};
+
+struct __attribute__((packed)) AudioFrameHeader {
+    char magic[4];
+    uint32_t start_time_us;
+    uint16_t payload_len;
+    uint16_t checksum;
+};
+
+uint16_t computeHeaderChecksum(const char magic[4], uint32_t startTimeUs, uint16_t payloadLen) {
+    uint16_t sum = 0;
+    for (uint8_t i = 0; i < 4; i++) {
+        sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(magic[i]));
+    }
+
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(startTimeUs & 0xFF));
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 8) & 0xFF));
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 16) & 0xFF));
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 24) & 0xFF));
+
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(payloadLen & 0xFF));
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((payloadLen >> 8) & 0xFF));
+    return sum;
+}
 
 void i2s_install() {
 

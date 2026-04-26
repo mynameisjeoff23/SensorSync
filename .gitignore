@@ -2,3 +2,4 @@
 .vscode
 Server/__pycache__/
 Server/ReceivedAudio/
+/src/config.local.h
