@@ -1,19 +1,36 @@
 import socket
 import threading
 import time
-import io
 import os
 import struct
+from collections import deque
 import numpy
 from scipy.io.wavfile import write 
-
-from CircularBuffer import CircularBuffer
 
 HOST = "0.0.0.0"
 PORT = 8000
 HEADER_FORMAT = "<4sIHH"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 MAX_PAYLOAD_LEN = 2048
+AUDIO_FREQUENCY = 16000
+AUDIO_LENGTH_S = 5
+MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
+
+
+def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarray:
+    """Scale 24-bit PCM stored in int32 containers up to full int32 range."""
+    if samples.size == 0:
+        return samples
+
+    max_abs = int(numpy.max(numpy.abs(samples.astype(numpy.int64))))
+
+    # If values fit in signed 24-bit range, they are likely right-justified int24.
+    if max_abs <= 0x7FFFFF:
+        scaled = samples.astype(numpy.int64) << 8
+        return numpy.clip(scaled, numpy.iinfo(numpy.int32).min, numpy.iinfo(numpy.int32).max).astype(numpy.int32)
+
+    print("Audio scaled before saving")
+    return samples
 
 
 def compute_header_checksum(magic: bytes, start_time: int, payload_len: int) -> int:
@@ -42,7 +59,8 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
         addr (tuple): The address of the client.
     """
     print(f"Client connected: {addr}")
-    buffer = CircularBuffer(80)
+    audio_chunks = deque()
+    samples_kept = 0
 
     conn.settimeout(5.0)
     time.sleep(0.5)                 # time for data to be received
@@ -72,10 +90,20 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             packet = recv_exact(conn, audioLength)
             audio = numpy.frombuffer(packet, dtype='<i4').astype(numpy.int32)  # small-endian int32
 
-            # Store audio chunk in circular buffer
-            # Currently disregarding start time of audio clip
-            # TODO: figure out what to do with time
-            buffer.add(audio)
+            audio_chunks.append(audio)
+            samples_kept += audio.size
+
+            while samples_kept > MAX_SAMPLES_TO_KEEP and audio_chunks:
+                overflow = samples_kept - MAX_SAMPLES_TO_KEEP
+                oldest = audio_chunks[0]
+
+                if overflow >= oldest.size:
+                    samples_kept -= oldest.size
+                    audio_chunks.popleft()
+                else:
+                    audio_chunks[0] = oldest[overflow:]
+                    samples_kept -= overflow
+
             print(f"Frame start={startTime} len={audioLength} first={packet[:20]!r}")
 
     except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.timeout) as e:
@@ -87,14 +115,14 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
         conn.close()    
         print(f"Client disconnected: {addr}")
 
-        if buffer.size() > 0:
+        if audio_chunks:
             serverPath = os.path.dirname(os.path.abspath(__file__))
             audioPath = serverPath + "/ReceivedAudio/"
             os.makedirs(audioPath, exist_ok=True)
 
-            totalAudio = numpy.concatenate([buffer.get() for x in range(buffer.size())], dtype=numpy.int32)
-            sampleRate = 16000
-            write(audioPath + f"audio_{addr[1]}.wav", sampleRate, totalAudio)
+            totalAudio = numpy.concatenate(list(audio_chunks), dtype=numpy.int32)
+            totalAudio = scale_right_justified_int24_to_int32(totalAudio)
+            write(audioPath + f"audio_{addr[1]}.wav", AUDIO_FREQUENCY, totalAudio)
 
 
 def main():
