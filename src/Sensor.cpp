@@ -27,9 +27,9 @@
 #define SERVER_PORT 8000
 #endif
 
-constexpr uint16_t OUTPUT_LEN = 2048;
-constexpr uint16_t SAMPLE_BUFFER_SIZE = 512;
 constexpr uint16_t SAMPLE_RATE = 16000;
+constexpr uint16_t SAMPLE_BUFFER_SIZE = 1024;
+constexpr uint16_t OUTPUT_LEN = SAMPLE_BUFFER_SIZE * 4;
 
 const char* ssid = WIFI_SSID;
 const char* pw = WIFI_PASSWORD;
@@ -51,9 +51,9 @@ i2s_config_t i2s_config = {
     .sample_rate = SAMPLE_RATE,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
     .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
-    .communication_format = I2S_COMM_FORMAT_I2S,
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 4,
+    .dma_buf_count = 16,
     .dma_buf_len = 1024,
     .use_apll = false,
     .tx_desc_auto_clear = false,
@@ -187,21 +187,12 @@ void loop() {
         if (!outputFull){
 
             size_t bytes_read = 0;
+            // TODO: calculate number of samples to read until send buffer is full
             i2s_read(I2S_NUM_0, raw_samples, sizeof(int32_t) * SAMPLE_BUFFER_SIZE, &bytes_read, portMAX_DELAY);
             int samples_read = bytes_read / sizeof(int32_t);
             // dump the samples out to the serial channel.
-            for (int i = 0; i < 20; i++)
-            {
-                Serial.printf("%ld ", raw_samples[i]);
-            }
-            Serial.println();
-            
-            for (int16_t i = 0; i < samples_read; i++) {
-                if (bufferIndex > OUTPUT_LEN - 4) {
-                    outputFull = 1;
-                    break;
-                }
 
+            for (int16_t i = 0; i < samples_read; i++) {
                 // load into buffer as small-endian
                 int32_t sample = raw_samples[i];
                 outputBuffer[bufferIndex] = sample & 0xFF;               // lower byte
@@ -210,8 +201,13 @@ void loop() {
                 outputBuffer[bufferIndex + 3] = (sample >> 24) & 0xFF;   // upper byte
 
                 bufferIndex += 4;
+
+                if (bufferIndex >= OUTPUT_LEN) {
+                    outputFull = 1;
+                    break;
+                }
             }
-                
+
         }
         
         if (outputFull){
