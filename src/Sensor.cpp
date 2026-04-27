@@ -68,11 +68,12 @@ i2s_pin_config_t i2s_mic_pins = {
 struct __attribute__((packed)) AudioFrameHeader {
     char magic[4];
     uint32_t start_time_us;
+    uint32_t packet_serial;
     uint16_t payload_len;
     uint16_t checksum;
 };
 
-uint16_t computeHeaderChecksum(const char magic[4], uint32_t startTimeUs, uint16_t payloadLen) {
+uint16_t computeHeaderChecksum(const char magic[4], uint32_t startTimeUs, uint32_t packetSerial, uint16_t payloadLen) {
     uint16_t sum = 0;
     for (uint8_t i = 0; i < 4; i++) {
         sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(magic[i]));
@@ -82,6 +83,11 @@ uint16_t computeHeaderChecksum(const char magic[4], uint32_t startTimeUs, uint16
     sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 8) & 0xFF));
     sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 16) & 0xFF));
     sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((startTimeUs >> 24) & 0xFF));
+
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(packetSerial & 0xFF));
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((packetSerial >> 8) & 0xFF));
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((packetSerial >> 16) & 0xFF));
+    sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((packetSerial >> 24) & 0xFF));
 
     sum = static_cast<uint16_t>(sum + static_cast<uint8_t>(payloadLen & 0xFF));
     sum = static_cast<uint16_t>(sum + static_cast<uint8_t>((payloadLen >> 8) & 0xFF));
@@ -166,6 +172,7 @@ void setup() {
 void loop() {
 
     static unsigned long time = micros();
+    static uint32_t packetSerial = 0;
 
     // Keep Wi-Fi connected before doing TCP work.
     if (WiFi.status() != WL_CONNECTED) {
@@ -219,14 +226,17 @@ void loop() {
             AudioFrameHeader header = {
                 {'A', 'U', 'D', '0'},
                 static_cast<uint32_t>(oldTime),
+                packetSerial,
                 bufferIndex,
                 0
             };
-            header.checksum = computeHeaderChecksum(header.magic, header.start_time_us, header.payload_len);
+            header.checksum = computeHeaderChecksum(header.magic, header.start_time_us, header.packet_serial, header.payload_len);
 
             // Send a fixed-size binary frame header followed by the exact payload length.
             client.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header));
             client.write(outputBuffer, bufferIndex);
+
+            packetSerial++;
 
             bufferIndex = 0;
             outputFull = 0;

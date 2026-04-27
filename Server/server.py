@@ -9,7 +9,7 @@ from scipy.io.wavfile import write
 
 HOST = "0.0.0.0"
 PORT = 8000
-HEADER_FORMAT = "<4sIHH"
+HEADER_FORMAT = "<4sIIHH"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 MAX_PAYLOAD_LEN = 4096
 AUDIO_FREQUENCY = 16000
@@ -33,9 +33,9 @@ def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarra
     return samples
 
 
-def compute_header_checksum(magic: bytes, start_time: int, payload_len: int) -> int:
+def compute_header_checksum(magic: bytes, start_time: int, packet_serial: int, payload_len: int) -> int:
     """Compute a simple 16-bit checksum over header fields except checksum itself."""
-    header_without_checksum = struct.pack("<4sIH", magic, start_time, payload_len)
+    header_without_checksum = struct.pack("<4sIIH", magic, start_time, packet_serial, payload_len)
     return sum(header_without_checksum) & 0xFFFF
 
 
@@ -73,7 +73,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     try:
         while True:
             header = recv_exact(conn, HEADER_SIZE)
-            magic, startTime, audioLength, checksum = struct.unpack(HEADER_FORMAT, header)
+            magic, startTime, packetSerial, audioLength, checksum = struct.unpack(HEADER_FORMAT, header)
 
             if magic != b"AUD0":
                 raise ValueError(f"Invalid frame magic: {magic!r}")
@@ -81,7 +81,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 raise ValueError(f"Audio length {audioLength} out of range [0, {MAX_PAYLOAD_LEN}]")
             if audioLength % 4 != 0:
                 raise ValueError(f"Audio length {audioLength} is not divisible by 4")
-            expected_checksum = compute_header_checksum(magic, startTime, audioLength)
+            expected_checksum = compute_header_checksum(magic, startTime, packetSerial, audioLength)
             if checksum != expected_checksum:
                 raise ValueError(
                     f"Header checksum mismatch: got={checksum} expected={expected_checksum}"
