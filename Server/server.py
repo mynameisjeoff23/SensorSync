@@ -6,6 +6,8 @@ import struct
 from collections import deque
 import numpy
 from scipy.io.wavfile import write 
+from PacketSerialTracker import PacketSerialTracker
+from ChecksumTracker import ChecksumTracker
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -15,7 +17,6 @@ MAX_PAYLOAD_LEN = 4096
 AUDIO_FREQUENCY = 16000
 AUDIO_LENGTH_S = 5
 MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
-
 
 def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarray:
     """Scale 24-bit PCM stored in int32 containers up to full int32 range."""
@@ -31,12 +32,6 @@ def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarra
 
     print("Audio scaled before saving")
     return samples
-
-
-def compute_header_checksum(magic: bytes, start_time: int, packet_serial: int, payload_len: int) -> int:
-    """Compute a simple 16-bit checksum over header fields except checksum itself."""
-    header_without_checksum = struct.pack("<4sIIH", magic, start_time, packet_serial, payload_len)
-    return sum(header_without_checksum) & 0xFFFF
 
 
 def recv_exact(conn: socket.socket, size: int) -> bytes:
@@ -61,14 +56,10 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     print(f"Client connected: {addr}")
     audio_chunks = deque()
     samples_kept = 0
+    packet_tracker = PacketSerialTracker()
+    checksum_tracker = ChecksumTracker()
 
     conn.settimeout(5.0)
-    time.sleep(0.5)                 # time for data to be received
-
-    # 0 is Time header
-    # 1 is Length header
-    # 2 is Audio data
-    dataType = 0
     
     try:
         while True:
@@ -81,14 +72,15 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 raise ValueError(f"Audio length {audioLength} out of range [0, {MAX_PAYLOAD_LEN}]")
             if audioLength % 4 != 0:
                 raise ValueError(f"Audio length {audioLength} is not divisible by 4")
-            expected_checksum = compute_header_checksum(magic, startTime, packetSerial, audioLength)
-            if checksum != expected_checksum:
+            if not checksum_tracker.validate(magic, startTime, packetSerial, audioLength, checksum):
                 raise ValueError(
-                    f"Header checksum mismatch: got={checksum} expected={expected_checksum}"
+                    f"Header checksum mismatch: got={checksum} expected={ChecksumTracker.compute_header_checksum(magic, startTime, packetSerial, audioLength)}"
                 )
 
             packet = recv_exact(conn, audioLength)
             audio = numpy.frombuffer(packet, dtype='<i4').astype(numpy.int32)  # small-endian int32
+
+            packet_tracker.observe(packetSerial)
 
             audio_chunks.append(audio)
             samples_kept += audio.size
