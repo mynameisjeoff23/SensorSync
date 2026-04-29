@@ -1,6 +1,5 @@
 import socket
 import threading
-import time
 import os
 import struct
 from collections import deque
@@ -8,6 +7,7 @@ import numpy
 from scipy.io.wavfile import write 
 from PacketSerialTracker import PacketSerialTracker
 from ChecksumTracker import ChecksumTracker
+from LatencyTracker import LatencyTracker
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -58,6 +58,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     samples_kept = 0
     packet_tracker = PacketSerialTracker()
     checksum_tracker = ChecksumTracker()
+    latency_tracker = LatencyTracker()
 
     conn.settimeout(5.0)
     
@@ -81,6 +82,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             audio = numpy.frombuffer(packet, dtype='<i4').astype(numpy.int32)  # small-endian int32
 
             packet_tracker.observe(packetSerial)
+            latency_tracker.observe(startTime)
 
             audio_chunks.append(audio)
             samples_kept += audio.size
