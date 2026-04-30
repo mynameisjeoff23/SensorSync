@@ -1,7 +1,8 @@
-import socket
-import threading
+import logging
 import os
+import socket
 import struct
+import threading
 from collections import deque
 import numpy
 from scipy.io.wavfile import write 
@@ -18,6 +19,9 @@ AUDIO_FREQUENCY = 16000
 AUDIO_LENGTH_S = 5
 MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
 def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarray:
     """Scale 24-bit PCM stored in int32 containers up to full int32 range."""
     if samples.size == 0:
@@ -30,7 +34,7 @@ def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarra
         scaled = samples.astype(numpy.int64) << 8
         return numpy.clip(scaled, numpy.iinfo(numpy.int32).min, numpy.iinfo(numpy.int32).max).astype(numpy.int32)
 
-    print("Audio scaled before saving")
+    logger.debug("Audio already appears to be full-width int32 before saving")
     return samples
 
 
@@ -53,7 +57,8 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
         conn (socket.socket): The socket connection to the client.
         addr (tuple): The address of the client.
     """
-    print(f"Client connected: {addr}")
+    client_id = f"{addr[0]}:{addr[1]}"
+    logger.info("Client connected: %s", client_id)
     audio_chunks = deque()
     samples_kept = 0
     packet_tracker = PacketSerialTracker()
@@ -78,11 +83,26 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                     f"Header checksum mismatch: got={checksum} expected={ChecksumTracker.compute_header_checksum(magic, startTime, packetSerial, audioLength)}"
                 )
 
+            previous_dropped_packets = packet_tracker.dropped_packets
+            previous_serial = packet_tracker.last_serial
+
             packet = recv_exact(conn, audioLength)
             audio = numpy.frombuffer(packet, dtype='<i4').astype(numpy.int32)  # small-endian int32
 
             packet_tracker.observe(packetSerial)
             latency_tracker.observe(startTime)
+
+            skipped_packets = packet_tracker.dropped_packets - previous_dropped_packets
+            if skipped_packets > 0:
+                logger.warning(
+                    "[%s] Skipped %d packet(s): previous_serial=%s current_serial=%d start_time_us=%d payload_len=%d",
+                    client_id,
+                    skipped_packets,
+                    previous_serial,
+                    packetSerial,
+                    startTime,
+                    audioLength,
+                )
 
             audio_chunks.append(audio)
             samples_kept += audio.size
@@ -98,16 +118,18 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                     audio_chunks[0] = oldest[overflow:]
                     samples_kept -= overflow
 
-            print(f"Frame start={startTime} len={audioLength} first={packet[:20]!r}")
-
-    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, socket.timeout) as e:
-        print(f"Connection lost with {addr}: {e}")
-    except (ConnectionError, ValueError) as e:
-        print(f"Received invalid audio chunk, skipping: {e}")
+    except socket.timeout:
+        logger.warning("[%s] Server reset connection after idle timeout.", client_id)
+    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+        logger.info("[%s] Connection closed by client: %s", client_id, e)
+    except ConnectionError as e:
+        logger.info("[%s] Connection closed while reading packet: %s", client_id, e)
+    except ValueError as e:
+        logger.warning("[%s] Server reset connection after faulty packet: %s", client_id, e)
 
     finally:
         conn.close()    
-        print(f"Client disconnected: {addr}")
+        logger.info("Client disconnected: %s", client_id)
 
         if audio_chunks:
             serverPath = os.path.dirname(os.path.abspath(__file__))
@@ -124,14 +146,14 @@ def main():
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind((HOST, PORT))
         server.listen()
-        print(f"TCP server listening on {HOST}:{PORT}")
+        logger.info("TCP server listening on %s:%s", HOST, PORT)
         try:
             while True:
                 conn, addr = server.accept()
                 thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
                 thread.start()
         except KeyboardInterrupt:
-            print("Shutting down server")
+            logger.info("Shutting down server")
 
 
 if __name__ == "__main__":
