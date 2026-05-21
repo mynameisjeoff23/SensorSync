@@ -19,8 +19,8 @@ AUDIO_FREQUENCY = 16000
 AUDIO_LENGTH_S = 5
 MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 
 def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarray:
     """Scale 24-bit PCM stored in int32 containers up to full int32 range."""
@@ -29,7 +29,7 @@ def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarra
 
     max_abs = int(numpy.max(numpy.abs(samples.astype(numpy.int64))))
 
-    # If values fit in signed 24-bit range, they are likely right-justified int24.
+    # right justified 24 bit
     if max_abs <= 0x7FFFFF:
         scaled = samples.astype(numpy.int64) << 8
         return numpy.clip(scaled, numpy.iinfo(numpy.int32).min, numpy.iinfo(numpy.int32).max).astype(numpy.int32)
@@ -104,6 +104,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                     audioLength,
                 )
 
+            logger.debug(audio[:20])
             audio_chunks.append(audio)
             samples_kept += audio.size
 

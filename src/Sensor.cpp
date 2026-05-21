@@ -27,6 +27,8 @@
 #define SERVER_PORT 8000
 #endif
 
+//#define PRINT_OUTPUT
+
 constexpr uint16_t SAMPLE_RATE = 16000;
 constexpr uint16_t SAMPLE_BUFFER_SIZE = 1024;
 constexpr uint16_t OUTPUT_LEN = SAMPLE_BUFFER_SIZE * 4;
@@ -230,9 +232,16 @@ void loop() {
                 bufferIndex,
                 0
             };
-            header.checksum = computeHeaderChecksum(header.magic, header.start_time_us, header.packet_serial, header.payload_len);
-
+            
+            #ifdef PRINT_OUTPUT
+            for (int i = 0; i < 20; i++){
+                Serial.print(outputBuffer[i], HEX);
+                Serial.print(' ');
+            }
+            #endif
+            
             // Send a fixed-size binary frame header followed by the exact payload length.
+            header.checksum = computeHeaderChecksum(header.magic, header.start_time_us, header.packet_serial, header.payload_len);
             client.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header));
             client.write(outputBuffer, bufferIndex);
 
