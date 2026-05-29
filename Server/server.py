@@ -3,12 +3,16 @@ import os
 import socket
 import struct
 import threading
-from collections import deque
 import numpy
 from scipy.io.wavfile import write 
+from faster_whisper import WhisperModel
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
+
 from PacketSerialTracker import PacketSerialTracker
 from ChecksumTracker import ChecksumTracker
 from LatencyTracker import LatencyTracker
+from TranscriptChunk import TranscriptChunk
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -18,9 +22,41 @@ MAX_PAYLOAD_LEN = 4096
 AUDIO_FREQUENCY = 16000
 AUDIO_LENGTH_S = 5
 MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
+MODEL_SIZE = "small"
+MODEL_REPO_ID = f"Systran/faster-whisper-{MODEL_SIZE}"
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
+
+_whisper_model = None
+_whisper_model_lock = threading.Lock()
+
+
+def ensure_whisper_model_available() -> str:
+    logger.info("Checking for Whisper model %s on disk", MODEL_REPO_ID)
+    try:
+        model_path = snapshot_download(repo_id=MODEL_REPO_ID, local_files_only=True)
+        logger.info("Whisper model found on disk at %s; internet access is not required.", model_path)
+        return model_path
+    except LocalEntryNotFoundError:
+        logger.warning(
+            "Whisper model %s is not on disk; internet access is required to download it once.",
+            MODEL_REPO_ID,
+        )
+        model_path = snapshot_download(repo_id=MODEL_REPO_ID)
+        logger.info("Whisper model downloaded to %s", model_path)
+        return model_path
+
+
+def get_whisper_model() -> WhisperModel:
+    global _whisper_model
+
+    with _whisper_model_lock:
+        if _whisper_model is None:
+            model_path = ensure_whisper_model_available()
+            _whisper_model = WhisperModel(model_path, device="cpu", compute_type="int8")
+
+        return _whisper_model
 
 def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarray:
     """Scale 24-bit PCM stored in int32 containers up to full int32 range."""
@@ -59,8 +95,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     """
     client_id = f"{addr[0]}:{addr[1]}"
     logger.info("Client connected: %s", client_id)
-    audio_chunks = deque()
-    samples_kept = 0
+    audio_chunks = TranscriptChunk()
     packet_tracker = PacketSerialTracker()
     checksum_tracker = ChecksumTracker()
     latency_tracker = LatencyTracker()
@@ -87,7 +122,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             previous_serial = packet_tracker.last_serial
 
             packet = recv_exact(conn, audioLength)
-            audio = numpy.frombuffer(packet, dtype='<i4').astype(numpy.int32)  # small-endian int32
+            audio_chunks.add(packet)
 
             packet_tracker.observe(packetSerial)
             latency_tracker.observe(startTime)
@@ -104,20 +139,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                     audioLength,
                 )
 
-            logger.debug(audio[:20])
-            audio_chunks.append(audio)
-            samples_kept += audio.size
-
-            while samples_kept > MAX_SAMPLES_TO_KEEP and audio_chunks:
-                overflow = samples_kept - MAX_SAMPLES_TO_KEEP
-                oldest = audio_chunks[0]
-
-                if overflow >= oldest.size:
-                    samples_kept -= oldest.size
-                    audio_chunks.popleft()
-                else:
-                    audio_chunks[0] = oldest[overflow:]
-                    samples_kept -= overflow
+            logger.debug(audio_chunks.first20())
 
     except socket.timeout:
         logger.warning("[%s] Server reset connection after idle timeout.", client_id)
@@ -137,12 +159,13 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             audioPath = serverPath + "/ReceivedAudio/"
             os.makedirs(audioPath, exist_ok=True)
 
-            totalAudio = numpy.concatenate(list(audio_chunks), dtype=numpy.int32)
-            totalAudio = scale_right_justified_int24_to_int32(totalAudio)
+            totalAudio = audio_chunks.asFloat32()
             write(audioPath + f"audio_{addr[1]}.wav", AUDIO_FREQUENCY, totalAudio)
 
 
 def main():
+    get_whisper_model()
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind((HOST, PORT))
