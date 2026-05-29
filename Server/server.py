@@ -1,18 +1,18 @@
-import logging
 import os
 import socket
 import struct
+import logging
 import threading
-import numpy
+from time import time
 from scipy.io.wavfile import write 
 from faster_whisper import WhisperModel
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 
-from PacketSerialTracker import PacketSerialTracker
-from ChecksumTracker import ChecksumTracker
 from LatencyTracker import LatencyTracker
 from TranscriptChunk import TranscriptChunk
+from ChecksumTracker import ChecksumTracker
+from PacketSerialTracker import PacketSerialTracker
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -25,8 +25,8 @@ MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
 MODEL_SIZE = "small"
 MODEL_REPO_ID = f"Systran/faster-whisper-{MODEL_SIZE}"
 
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 
 _whisper_model = None
 _whisper_model_lock = threading.Lock()
@@ -58,21 +58,6 @@ def get_whisper_model() -> WhisperModel:
 
         return _whisper_model
 
-def scale_right_justified_int24_to_int32(samples: numpy.ndarray) -> numpy.ndarray:
-    """Scale 24-bit PCM stored in int32 containers up to full int32 range."""
-    if samples.size == 0:
-        return samples
-
-    max_abs = int(numpy.max(numpy.abs(samples.astype(numpy.int64))))
-
-    # right justified 24 bit
-    if max_abs <= 0x7FFFFF:
-        scaled = samples.astype(numpy.int64) << 8
-        return numpy.clip(scaled, numpy.iinfo(numpy.int32).min, numpy.iinfo(numpy.int32).max).astype(numpy.int32)
-
-    logger.debug("Audio already appears to be full-width int32 before saving")
-    return samples
-
 
 def recv_exact(conn: socket.socket, size: int) -> bytes:
     chunks = bytearray()
@@ -93,6 +78,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
         conn (socket.socket): The socket connection to the client.
         addr (tuple): The address of the client.
     """
+
     client_id = f"{addr[0]}:{addr[1]}"
     logger.info("Client connected: %s", client_id)
     audio_chunks = TranscriptChunk()
@@ -103,6 +89,9 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     conn.settimeout(5.0)
     
     try:
+        transcriptionStart = time()
+        logger.info("Transcription Starting Soon...")
+
         while True:
             header = recv_exact(conn, HEADER_SIZE)
             magic, startTime, packetSerial, audioLength, checksum = struct.unpack(HEADER_FORMAT, header)
@@ -140,6 +129,18 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 )
 
             logger.debug(audio_chunks.first20())
+
+            if time() - transcriptionStart > 1.0:
+                start_trans = time()
+                with _whisper_model_lock:
+                    segments, info = _whisper_model.transcribe(audio_chunks.asFloat32(), beam_size=1)
+                    text = " ".join(segment.text for segment in segments)
+                trans_duration = time() - start_trans
+
+                rendered_text = text.strip()
+                logger.info("[%s] %s (%.2fs)", client_id, rendered_text, trans_duration)
+                transcriptionStart = time()
+
 
     except socket.timeout:
         logger.warning("[%s] Server reset connection after idle timeout.", client_id)
