@@ -7,7 +7,6 @@ FREQUENCY = 16000                                   # audio frequency in Hz
 AUDIO_LENGTH_S = 5                                  # length of audio to keep in seconds
 DEFAULT_SIZE_SAMPLES = FREQUENCY * AUDIO_LENGTH_S   # default size of transcript chunk in samples
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 class TranscriptChunk:

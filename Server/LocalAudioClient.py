@@ -10,7 +10,6 @@ except ImportError:
     print("ERROR: pyaudio not installed. Install it with: pip install pyaudio")
     exit(1)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 # Configuration
