@@ -13,6 +13,7 @@ from LatencyTracker import LatencyTracker
 from TranscriptChunk import TranscriptChunk
 from ChecksumTracker import ChecksumTracker
 from PacketSerialTracker import PacketSerialTracker
+from Speech import Speech
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -21,7 +22,8 @@ HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 MAX_PAYLOAD_LEN = 4096
 AUDIO_FREQUENCY = 16000
 AUDIO_LENGTH_S = 5
-#PRINT_TRANSCRIPT_OUTPUT = True
+PRINT_TRANSCRIPT_OUTPUT = True              # only leave true for debugging
+TRANSCRIPT_INTERVAL_S = 2.5
 MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "tiny")
 MODEL_REPO_ID = f"Systran/faster-whisper-{MODEL_SIZE}"
@@ -97,7 +99,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     packet_tracker = PacketSerialTracker()
     checksum_tracker = ChecksumTracker()
     latency_tracker = LatencyTracker()
-    #speech = Speech(printOut=True)
+    speech = Speech(printOut=True)
 
     conn.settimeout(5.0)
     
@@ -143,7 +145,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 
             logger.debug(audio_chunks.first20())
 
-            if time() - transcriptionStart > 1.0:
+            if time() - transcriptionStart > TRANSCRIPT_INTERVAL_S:
                 start_trans = time()
                 with _whisper_model_lock:
                     segments, info = _whisper_model.transcribe(audio_chunks.asFloat32(), 
@@ -156,7 +158,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 trans_duration = time() - start_trans
 
                 rendered_text = text.strip()
-                logger.info("[%s] %s (%.2fs)", client_id, rendered_text, trans_duration)
+                speech.addNewWords(rendered_text)
                 transcriptionStart = time()
 
 
