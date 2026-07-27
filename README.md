@@ -54,3 +54,12 @@ The server validates each frame in this order:
 3. `payload_len % 4 == 0`
 4. `header_checksum` matches computed checksum
 5. Read exactly `payload_len` bytes and decode as little-endian `int32`
+
+## Whisper Model Configuration
+
+The Python server reads these optional environment variables at startup:
+
+- `WHISPER_MODEL` sets the faster-whisper model name. The default is `tiny`.
+- `WHISPER_MODEL_PATH` points to a local Whisper model directory.
+
+If `WHISPER_MODEL_PATH` is not set, the server passes `WHISPER_MODEL` directly to `faster_whisper.WhisperModel`, which downloads the model on demand if it is not already cached locally.

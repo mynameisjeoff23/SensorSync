@@ -1,13 +1,13 @@
 import os
+from psutil import cpu_count
 import socket
 import struct
 import logging
 import threading
 from time import time
+from pathlib import Path
 from scipy.io.wavfile import write 
 from faster_whisper import WhisperModel
-from huggingface_hub import snapshot_download
-from huggingface_hub.errors import LocalEntryNotFoundError
 
 from LatencyTracker import LatencyTracker
 from TranscriptChunk import TranscriptChunk
@@ -21,31 +21,39 @@ HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 MAX_PAYLOAD_LEN = 4096
 AUDIO_FREQUENCY = 16000
 AUDIO_LENGTH_S = 5
+#PRINT_TRANSCRIPT_OUTPUT = True
 MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
-MODEL_SIZE = "small"
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "tiny")
 MODEL_REPO_ID = f"Systran/faster-whisper-{MODEL_SIZE}"
+MODEL_PATH = os.environ.get("WHISPER_MODEL_PATH", "").strip()
+NUM_CORES = cpu_count(logical = False)
 
-logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 _whisper_model = None
 _whisper_model_lock = threading.Lock()
 
 
+def _resolve_local_model_path() -> str | None:
+    if not MODEL_PATH:
+        return None
+
+    resolved_path = Path(MODEL_PATH).expanduser()
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"Whisper model path does not exist: {resolved_path}")
+
+    return str(resolved_path)
+
+
 def ensure_whisper_model_available() -> str:
-    logger.info("Checking for Whisper model %s on disk", MODEL_REPO_ID)
-    try:
-        model_path = snapshot_download(repo_id=MODEL_REPO_ID, local_files_only=True)
-        logger.info("Whisper model found on disk at %s; internet access is not required.", model_path)
-        return model_path
-    except LocalEntryNotFoundError:
-        logger.warning(
-            "Whisper model %s is not on disk; internet access is required to download it once.",
-            MODEL_REPO_ID,
-        )
-        model_path = snapshot_download(repo_id=MODEL_REPO_ID)
-        logger.info("Whisper model downloaded to %s", model_path)
-        return model_path
+    local_model_path = _resolve_local_model_path()
+    if local_model_path is not None:
+        logger.info("Using Whisper model from local path %s", local_model_path)
+        return local_model_path
+
+    logger.info("Using Whisper model name %s", MODEL_SIZE)
+    return MODEL_SIZE
 
 
 def get_whisper_model() -> WhisperModel:
@@ -53,8 +61,12 @@ def get_whisper_model() -> WhisperModel:
 
     with _whisper_model_lock:
         if _whisper_model is None:
-            model_path = ensure_whisper_model_available()
-            _whisper_model = WhisperModel(model_path, device="cpu", compute_type="int8")
+            model_source = ensure_whisper_model_available()
+            _whisper_model = WhisperModel(model_source, 
+                                          device="cpu", 
+                                          compute_type="int8",
+                                          cpu_threads=NUM_CORES,
+                                          num_workers=2)    #TODO: change num_workers and quantify performance
 
         return _whisper_model
 
@@ -85,6 +97,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     packet_tracker = PacketSerialTracker()
     checksum_tracker = ChecksumTracker()
     latency_tracker = LatencyTracker()
+    #speech = Speech(printOut=True)
 
     conn.settimeout(5.0)
     
@@ -133,7 +146,12 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             if time() - transcriptionStart > 1.0:
                 start_trans = time()
                 with _whisper_model_lock:
-                    segments, info = _whisper_model.transcribe(audio_chunks.asFloat32(), beam_size=1)
+                    segments, info = _whisper_model.transcribe(audio_chunks.asFloat32(), 
+                                                               beam_size=1,
+                                                               language='en',
+                                                               without_timestamps=True,
+                                                               vad_filter=True,
+                                                               vad_parameters=dict(min_silence_duration_ms=500))
                     text = " ".join(segment.text for segment in segments)
                 trans_duration = time() - start_trans
 
@@ -165,7 +183,11 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 
 
 def main():
-    get_whisper_model()
+    try:
+        get_whisper_model()
+    except (FileNotFoundError, RuntimeError) as e:
+        logger.error("%s", e)
+        raise SystemExit(1) from e
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
