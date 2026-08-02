@@ -159,6 +159,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 
                 rendered_text = text.strip()
                 speech.addNewWords(rendered_text)
+                logger.info("Time to transcribe: %.3f", (trans_duration))
                 transcriptionStart = time()
 
 

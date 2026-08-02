@@ -10,42 +10,42 @@ class Speech:
 
         if self.printOut:
             title = "Speech Output"
-            system_name = platform.system()
+            os_name = platform.system()
 
-            consumer_script = (
-                "import sys; "
-                "while True: "
-                "    chunk = sys.stdin.read(1); "  # Read 1 character at a time
-                "    if not chunk: break; "
-                "    sys.stdout.write(chunk); "
-                "    sys.stdout.flush()"
-            )
-
-            if system_name == "Windows":
-                self.terminal = subprocess.Popen(
-                    [sys.executable, '-c', consumer_script],
+            if os_name == 'Windows':
+                # Open a dedicated console that only echoes speech text.
+                relay_code = (
+                    "import os, sys\n"
+                    f"os.system('title {title}')\n"
+                    "while True:\n"
+                    "    chunk = sys.stdin.read(1)\n"
+                    "    if not chunk:\n"
+                    "        break\n"
+                    "    sys.stdout.write(chunk)\n"
+                    "    sys.stdout.flush()\n"
+                )
+                self.proc = subprocess.Popen(
+                    [sys.executable, "-u", "-c", relay_code],
                     stdin=subprocess.PIPE,
                     text=True,
-                    bufsize=0,  # Turn off buffering to send characters instantly
                     creationflags=subprocess.CREATE_NEW_CONSOLE,
                 )
-            elif system_name == "Darwin":
-                # macOS requires a script approach to pipe into a specific new window
-                # TODO: implement macOS solution
-                raise NotImplementedError('macOS requires named pipes for stdin routing')
-            else:
-                # Linux: Launch a shell inside a new gnome-terminal
-                self.terminal = subprocess.Popen(
-                    [
-                        'gnome-terminal',
-                        '--',
-                        sys.executable,
-                        '-c',
-                        consumer_script,
-                    ],
+
+            elif os_name == 'Darwin':  # macOS
+                self.proc = subprocess.Popen([
+                    'osascript',
+                    '-e',
+                    (
+                        'tell application "Terminal" to do script "echo \''
+                        f'{title}\'; cat"'
+                    ),
+                ],)
+
+            else:  # Linux
+                self.proc = subprocess.Popen(
+                    ['gnome-terminal', '--', 'bash', '-c', 'cat'],
                     stdin=subprocess.PIPE,
                     text=True,
-                    bufsize=0,
                 )
 
 
@@ -110,16 +110,19 @@ class Speech:
             new_words = new[index + len(common_subsentence):].strip()
             if new_words:
                 if self.printOut:
-                    if self.terminal.poll() is None:
-                        self.terminal.stdin.write(new_words)
-                        self.terminal.stdin.flush()
+                    if self.proc and self.proc.stdin:
+                        self.proc.stdin.write(new_words)
+                        self.proc.stdin.flush()
         else:
             # If there is no common subsentence, print the entire new message
             if new:
                 if self.printOut:
-                    if self.terminal.poll() is None:
-                        self.terminal.stdin.write(new)
-                        self.terminal.stdin.flush()
+                    if self.proc and self.proc.stdin:
+                        self.proc.stdin.write(new)
+                        self.proc.stdin.flush()
 
         # Update the current message to the new message
         self.message = new
+
+if __name__ == "__main__":
+    print(f"{__file__} is not meant to be run as main")
