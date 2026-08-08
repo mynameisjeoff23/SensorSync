@@ -9,11 +9,12 @@ from pathlib import Path
 from scipy.io.wavfile import write 
 from faster_whisper import WhisperModel
 
-from LatencyTracker import LatencyTracker
-from TranscriptChunk import TranscriptChunk
-from ChecksumTracker import ChecksumTracker
-from PacketSerialTracker import PacketSerialTracker
-from Speech import Speech
+from Server.monitoring.LatencyTracker import LatencyTracker
+from Server.monitoring.ChecksumTracker import ChecksumTracker
+from Server.monitoring.PacketSerialTracker import PacketSerialTracker
+
+from Server.voice.Speech import Speech
+from Server.voice.TranscriptChunk import TranscriptChunk
 
 HOST = "0.0.0.0"
 PORT = 8000
