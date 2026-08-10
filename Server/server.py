@@ -5,16 +5,23 @@ import struct
 import logging
 import threading
 from time import time
-from pathlib import Path
+from pathlib import Pathx
 from scipy.io.wavfile import write 
 from faster_whisper import WhisperModel
 
-from Server.monitoring.LatencyTracker import LatencyTracker
-from Server.monitoring.ChecksumTracker import ChecksumTracker
-from Server.monitoring.PacketSerialTracker import PacketSerialTracker
-
-from Server.voice.Speech import Speech
-from Server.voice.TranscriptChunk import TranscriptChunk
+try:
+    from Server.monitoring.LatencyTracker import LatencyTracker
+    from Server.monitoring.ChecksumTracker import ChecksumTracker
+    from Server.monitoring.PacketSerialTracker import PacketSerialTracker
+    from Server.voice.Speech import Speech
+    from Server.voice.TranscriptChunk import TranscriptChunk
+except ModuleNotFoundError:
+    # Support running this file directly (python Server/server.py).
+    from monitoring.LatencyTracker import LatencyTracker
+    from monitoring.ChecksumTracker import ChecksumTracker
+    from monitoring.PacketSerialTracker import PacketSerialTracker
+    from voice.Speech import Speech
+    from voice.TranscriptChunk import TranscriptChunk
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -24,7 +31,10 @@ MAX_PAYLOAD_LEN = 4096
 AUDIO_FREQUENCY = 16000
 AUDIO_LENGTH_S = 5
 PRINT_TRANSCRIPT_OUTPUT = True              # only leave true for debugging
-TRANSCRIPT_INTERVAL_S = 2.5
+# Transcription window (seconds) and interval between transcriptions.
+# For equal overlap with previous and next windows use interval = window / 2 (50% overlap).
+TRANSCRIPT_WINDOW_S = AUDIO_LENGTH_S
+TRANSCRIPT_INTERVAL_S = TRANSCRIPT_WINDOW_S / 2.0
 MAX_SAMPLES_TO_KEEP = AUDIO_FREQUENCY * AUDIO_LENGTH_S
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "tiny")
 MODEL_REPO_ID = f"Systran/faster-whisper-{MODEL_SIZE}"
@@ -102,6 +112,11 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
     latency_tracker = LatencyTracker()
     speech = Speech(printOut=True)
 
+    def handle_voice_command(command: dict) -> None:
+        logger.info("Voice command detected: %s", command)
+
+    speech.on_command = handle_voice_command
+
     conn.settimeout(5.0)
     
     try:
@@ -148,13 +163,41 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
 
             if time() - transcriptionStart > TRANSCRIPT_INTERVAL_S:
                 start_trans = time()
+                # Extract a fixed-length window ending at the most recent audio to ensure
+                # consistent overlap with previous and next transcriptions.
+                window_audio = audio_chunks.get_last_seconds(TRANSCRIPT_WINDOW_S)
+                if window_audio.size == 0:
+                    transcriptionStart = time()
+                    continue
+                # Build a small keyword prompt from the configured wakewords and commands
+                keywords = set()
+                try:
+                    keywords.update(w.lower() for w in speech.wakewords if w)
+                    for cmd in speech.commands:
+                        verbs = cmd.get("verb") or []
+                        objs = cmd.get("object") or []
+                        mods = cmd.get("modifier") or []
+                        keywords.update(v.lower() for v in verbs if v)
+                        keywords.update(o.lower() for o in objs if o)
+                        keywords.update(m.lower() for m in mods if m)
+                except Exception:
+                    keywords = set()
+
+                initial_prompt = None
+                if keywords:
+                    # Provide a brief comma-separated list as an initial prompt to bias transcription
+                    initial_prompt = "Possible keywords: " + ", ".join(sorted(keywords))
+
                 with _whisper_model_lock:
-                    segments, info = _whisper_model.transcribe(audio_chunks.asFloat32(), 
-                                                               beam_size=1,
-                                                               language='en',
-                                                               without_timestamps=True,
-                                                               vad_filter=True,
-                                                               vad_parameters=dict(min_silence_duration_ms=500))
+                    segments, info = _whisper_model.transcribe(
+                        window_audio,
+                        beam_size=1,
+                        language='en',
+                        without_timestamps=True,
+                        vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=500),
+                        initial_prompt=initial_prompt,
+                    )
                     text = " ".join(segment.text for segment in segments)
                 trans_duration = time() - start_trans
 

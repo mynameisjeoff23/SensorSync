@@ -12,15 +12,16 @@ logger = logging.getLogger(__name__)
 class TranscriptChunk:
 
     def __init__(self, size:int=DEFAULT_SIZE_SAMPLES) -> None:
-        """Creates a TranscriptChunk object. 
-        This chunk is a circular buffer of bytes that represents the most recent audio received from the client. 
-        The size of the chunk is determined by the size parameter, which is the number of samples to keep in the chunk. 
-        The chunk is stored as a bytes object, and is updated with each new chunk of audio received from the client.
+        """Creates a TranscriptChunk object.
+        This chunk is a rolling buffer of raw PCM int32 bytes representing recent audio.
 
         Args:
-            size (int): size of transcript buffer in samples
+            size (int): number of samples to keep in the buffer (not bytes)
         """
-        self.MAX_SIZE = DEFAULT_SIZE_SAMPLES * 4        # max size in bytes (4 bytes per sample for int32)
+        self.sample_rate = FREQUENCY
+        self.bytes_per_sample = 4
+        # MAX_SIZE stored in bytes
+        self.MAX_SIZE = int(size) * self.bytes_per_sample
         self.chunks = bytearray()
         self.startIndex = 0
 
@@ -31,12 +32,12 @@ class TranscriptChunk:
         Args:
             chunk (bytes): audio chunk to add
         """
-        # TODO: make this circular using startIndex, good for now
+        # Append while ensuring we don't exceed MAX_SIZE (rolling buffer)
         if len(chunk) >= self.MAX_SIZE:
             self.chunks = bytearray(chunk[-self.MAX_SIZE:])
             self.startIndex = 0
             return
-    
+
         self.chunks.extend(chunk)
         excess = len(self.chunks) - self.MAX_SIZE
         if excess > 0:
@@ -53,6 +54,35 @@ class TranscriptChunk:
         audio = np.frombuffer(self.chunks, dtype='<i4')
         normalized = audio.astype(np.float32) / 8388608.0
         maximum = np.max(np.abs(normalized))
+        if maximum > 1.0:
+            logger.warning("Audio normalization resulted in a value of %f, outside of [-1.0, 1.0]. Check input data.", maximum)
+        return normalized
+
+    def get_last_seconds(self, seconds: float) -> npt.NDArray[np.float32]:
+        """Return the last `seconds` seconds of audio as a normalized float32 numpy array.
+
+        If there is less data than requested, return whatever is available.
+        """
+        if seconds <= 0:
+            return np.array([], dtype=np.float32)
+
+        samples_needed = int(seconds * self.sample_rate)
+        bytes_needed = samples_needed * self.bytes_per_sample
+
+        if bytes_needed <= 0:
+            return np.array([], dtype=np.float32)
+
+        if len(self.chunks) == 0:
+            return np.array([], dtype=np.float32)
+
+        if bytes_needed >= len(self.chunks):
+            raw = bytes(self.chunks)
+        else:
+            raw = bytes(self.chunks[-bytes_needed:])
+
+        audio = np.frombuffer(raw, dtype='<i4')
+        normalized = audio.astype(np.float32) / 8388608.0
+        maximum = np.max(np.abs(normalized)) if normalized.size else 0.0
         if maximum > 1.0:
             logger.warning("Audio normalization resulted in a value of %f, outside of [-1.0, 1.0]. Check input data.", maximum)
         return normalized

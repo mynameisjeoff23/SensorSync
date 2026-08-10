@@ -1,0 +1,5 @@
+wakewords: computa/clanker/jarvis/computer
+
+commands:
+verb: turn/power object: lights modifier: off
+verb: turn/power object: lights modifier: on

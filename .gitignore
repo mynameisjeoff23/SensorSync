@@ -1,6 +1,6 @@
 .pio
 .vscode
-Server/__pycache__/
+__pycache__/
 Server/ReceivedAudio/
 /src/config.local.h
 venv
