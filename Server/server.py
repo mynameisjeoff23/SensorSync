@@ -5,7 +5,7 @@ import struct
 import logging
 import threading
 from time import time
-from pathlib import Pathx
+from pathlib import Path
 from scipy.io.wavfile import write 
 from faster_whisper import WhisperModel
 
